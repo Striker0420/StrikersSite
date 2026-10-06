@@ -29,7 +29,7 @@
     font: 14px/1 Georgia, serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
     border-radius: 999px; padding: 7px 12px; cursor: pointer;
   }
-  .tab[aria-selected="true"] { background: var(--gold); color: #2a2150; border-color: var(--gold); }
+  .tab[aria-selected="true"], .chip[aria-pressed="true"] { background: var(--gold); color: #2a2150; border-color: var(--gold); }
   .tab .n { color: var(--muted); font-size: 12px; margin-left: 4px; }
   .tab[aria-selected="true"] .n { color: #5b4f7d; }
   input[type="search"] {
@@ -108,6 +108,7 @@
   <div class="toolbar">
     <div class="tabs" id="tabs" role="tablist" aria-label="Galaxy"></div>
     <input type="search" id="q" placeholder="search planets, systems, biomes, players, platforms" aria-label="Search">
+    <button type="button" class="chip" id="onlyPlayers" aria-pressed="false">with players</button>
   </div>
   <div class="layout">
     <section class="mapbox" aria-label="Galaxy map">
@@ -161,6 +162,7 @@ function parseCoords(text) {
 // strong, well-separated hues: the first palette's purple and its "not recorded" lavender were nearly the same colour
 const STAR_COL = { Yellow: "#ffd23f", Green: "#3ee07a", Blue: "#4aa8ff", Red: "#ff5546", Purple: "#b464ff" };
 const UNKNOWN_COL = "#8f89a8";        // drawn HOLLOW and smaller, so "we never read its star" cannot pass for a colour
+const PEOPLE_COL = "#7dfcff";         // the little figure over systems where other players have been
 const BIOME_COL = {
   Lush: "#86d96f", Toxic: "#c2e64e", Scorched: "#ffa25a", Radioactive: "#e2f55a", Frozen: "#aee0ff", Barren: "#d2b081",
   Dead: "#a19fae", Weird: "#ff86de", Red: "#ff7474", Green: "#74ffa2", Blue: "#74b9ff", Swamp: "#8fb878", Lava: "#ff6a3a",
@@ -186,7 +188,8 @@ function haystack(s) {
   return [titleOf(s), s.star, s.race, s.economy, s.wealth, s.conflict, galacticCoords(s),
           ...s.planets.flatMap(p => [p.name, p.biome]), ...s.found_by.flatMap(p => [p.name, p.on])].filter(Boolean).join(" ").toLowerCase();
 }
-const matches = s => !query || s._hay.includes(query);
+let onlyPlayers = false;
+const matches = s => (!query || s._hay.includes(query)) && (!onlyPlayers || s.found_by.length > 0);
 
 // ---- the map ----------------------------------------------------------------------------------------------------------
 const cv = $("map"), ctx = cv.getContext("2d");
@@ -284,6 +287,16 @@ function paint() {
     }
   };
   for (const s of shown) if (matches(s) && s !== selected) dot(s);
+  for (const s of shown) {           // a small mark above every system with players' names, so they can be found
+    if (!s.found_by.length || !matches(s)) continue;
+    const [x, y] = toScreen(s.x, s.z);
+    if (x < -20 || y < -20 || x > w + 20 || y > h + 20) continue;
+    const yy = Math.round(y - sz / 2) - 9, xx = Math.round(x);
+    ctx.fillStyle = "rgba(8, 6, 18, 0.9)"; ctx.fillRect(xx - 4, yy - 4, 8, 8);
+    ctx.fillStyle = PEOPLE_COL;
+    ctx.fillRect(xx - 1, yy - 3, 2, 2);                 // a tiny figure: a head ...
+    ctx.fillRect(xx - 2, yy, 4, 3);                     // ... and shoulders
+  }
   // the chosen system LAST: several systems can share one spot, and drawn in list order a neighbour painted over
   // it - the brackets framed System 211 (yellow) around System 0A6's red dot
   if (selected && selected.g === galaxy) dot(selected);
@@ -380,7 +393,8 @@ const linkFor = (s, p) => `${s.g}/${galacticCoords(s)}/${p}`;
 function renderCard() {
   const s = selected, card = $("card");
   if (!s) {
-    card.innerHTML = `<p class="empty">Tap a system on the map, or pick one from the list, to see its planets and the portal glyphs that take you there.</p>`;
+    card.innerHTML = `<p class="empty">Tap a system on the map, or pick one from the list, to see its planets and the portal glyphs that take you there.</p>
+      <p class="empty">Systems with a small cyan figure above them list the other players who have been there, and the console they play on - press <b>with players</b> to show only those.</p>`;
     return;
   }
   const g = DATA.galaxies.find(x => x.g === s.g);
@@ -454,10 +468,15 @@ function summary(s) {
   if (s.race) bits.push(s.race);
   if (s.planets.length) bits.push(s.planets.map(p => p.biome).filter(Boolean).join(", "));
   else bits.push(galacticCoords(s));
+  if (s.found_by.length) {
+    const plats = [...new Set(s.found_by.map(p => p.on).filter(Boolean))];
+    bits.unshift(`${s.found_by.length} player${s.found_by.length === 1 ? "" : "s"}${plats.length ? " (" + plats.join(", ") + ")" : ""}`);
+  }
   return bits.join(" · ");
 }
 function renderList() {
-  const list = shown.filter(matches).sort((a, b) => (b.planets.length > 0) - (a.planets.length > 0) || titleOf(a).localeCompare(titleOf(b)));
+  const list = shown.filter(matches).sort((a, b) => b.found_by.length - a.found_by.length ||
+    (b.planets.length > 0) - (a.planets.length > 0) || titleOf(a).localeCompare(titleOf(b)));
   const g = DATA.galaxies.find(x => x.g === galaxy);
   $("listTitle").textContent = `${list.length} ${list.length === 1 ? "system" : "systems"} in ${g ? g.name : "this galaxy"}${query ? ` matching "${query}"` : ""}`;
   $("items").innerHTML = list.map((s, i) => `<button type="button" class="item" data-i="${i}" aria-current="${s === selected}">
@@ -469,10 +488,16 @@ $("q").addEventListener("input", () => {
   query = $("q").value.trim().toLowerCase();
   renderTabs(); renderList(); draw();
 });
+$("onlyPlayers").addEventListener("click", () => {
+  onlyPlayers = !onlyPlayers;
+  $("onlyPlayers").setAttribute("aria-pressed", String(onlyPlayers));
+  renderTabs(); renderList(); draw();
+});
 function legend() {
   $("legend").innerHTML = Object.entries(STAR_COL).map(([k, c]) => `<span><span class="dot" style="background:${c}"></span>${k} star</span>`).join("") +
     `<span><span class="dot" style="background:transparent;outline:1px solid ${UNKNOWN_COL};outline-offset:-1px"></span>star not recorded</span>` +
-    `<span><span class="dot ring" style="background:transparent"></span>space station</span>`;
+    `<span><span class="dot ring" style="background:transparent"></span>space station</span>` +
+    `<span><span class="dot" style="background:${PEOPLE_COL};clip-path:polygon(35% 0,65% 0,65% 35%,100% 55%,100% 100%,0 100%,0 55%,35% 35%)"></span>other players have been here</span>`;
 }
 
 // ---- start: read the data, then honour a shared link -------------------------------------------------------------------
