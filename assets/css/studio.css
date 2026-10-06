@@ -1,5 +1,35 @@
 /* Additions for the Claude Studio sections - loaded after main.css, so the template's own files stay untouched. */
 
+/* The page's own picture: "Night Shift", painted for this site (studio/2026-10-06 Night Shift). The template laid a
+   photo under an even 80% grey veil; pixel art wants the veil only where words sit on it - the left, where the
+   welcome is - and its pixels kept square, so it is scaled with image-rendering: pixelated (480x270 is exactly 4x
+   on a 1920-wide screen). The template's content sections set image-rendering back to normal below. */
+body {
+	background-color: #14121f;
+	background-image: linear-gradient(to right, rgba(20, 18, 33, 0.84) 0%, rgba(20, 18, 33, 0.62) 38%, rgba(20, 18, 33, 0.2) 68%, rgba(20, 18, 33, 0.12) 100%),
+	                  url("../../studio/2026-10-06%20Night%20Shift/Night%20Shift%20-%20480x270.png");
+	background-size: auto, cover;
+	background-position: center, 70% 70%;
+	image-rendering: pixelated;
+}
+
+	#wrapper {
+		image-rendering: auto;
+	}
+
+/* Below 1280px the template gives the banner and the footer their own copy of the background (a fixed background is
+   unreliable on phones). The words span the width there, so the veil is even; the picture is anchored right of
+   centre so a phone's narrow slice still holds the planet, the island and the cabin. */
+@media screen and (max-width: 1280px) {
+	#banner, #footer {
+		background-color: #14121f;
+		background-image: linear-gradient(rgba(20, 18, 33, 0.6), rgba(20, 18, 33, 0.6)),
+		                  url("../../studio/2026-10-06%20Night%20Shift/Night%20Shift%20-%20480x270.png");
+		background-size: auto, cover;
+		background-position: center, 78% 70%;
+	}
+}
+
 /* The template frames spotlight pictures as circles (made for square photos); pixel art wants a wide frame.
    Side by side, the text keeps whatever the picture leaves - but a flex item never shrinks below its widest
    unbreakable line, and two no-wrap buttons in a row are wider than what a fixed 34em picture left, so the text

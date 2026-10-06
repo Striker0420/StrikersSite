@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A Small Orrery</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05040c; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; color: #e8e2f5;
+         font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif; }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, calc(100vh * 16 / 9));
+    height: auto;
+    aspect-ratio: 16 / 9;
+    display: block;
+    touch-action: manipulation;
+    cursor: crosshair;
+  }
+  [hidden] { display: none !important; }   /* the rules below set display, which would otherwise beat the attribute */
+  .ui { position: fixed; z-index: 2; }
+  #back { top: 14px; left: 16px; font-size: 14px; color: #a99fc4; text-decoration: none; opacity: 0.5; transition: opacity 0.3s ease; }
+  #back:hover, #back:focus { opacity: 1; }
+  #controls { top: 10px; right: 12px; display: flex; gap: 6px; }
+  #controls button {
+    font: 15px/1 Georgia, "Palatino Linotype", serif; color: #d9d2ea; background: rgba(23, 20, 42, 0.6);
+    border: 1px solid rgba(169, 159, 196, 0.35); border-radius: 6px; padding: 7px 10px; cursor: pointer;
+    opacity: 0.55; transition: opacity 0.3s ease;
+  }
+  #controls button:hover, #controls button:focus-visible { opacity: 1; }
+  #hint, #align {
+    left: 0; right: 0; text-align: center; font-style: italic; pointer-events: none; opacity: 0;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85);
+  }
+  #hint { bottom: 4vh; font-size: 15px; color: #d9d2ea; transition: opacity 1.2s ease; }
+  #align { top: 11vh; font-size: 20px; letter-spacing: 0.06em; color: #f4d9a8; transition: opacity 2.5s ease; }
+  #clock { right: 14px; bottom: 12px; font: 12px/1.4 ui-monospace, Consolas, monospace; color: #a99fc4;
+           opacity: 0; transition: opacity 1s ease; pointer-events: none; }
+  #tip { font: italic 13px/1.3 Georgia, serif; color: #f4d9a8; pointer-events: none; opacity: 0;
+         text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9); transform: translate(14px, -22px); white-space: nowrap; }
+  #intro {                                  /* title above the orrery, the button below it: the worlds stay in view */
+    inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    text-align: center; padding: 9vh 20px 11vh; box-sizing: border-box; cursor: pointer;
+    background: linear-gradient(rgba(5, 4, 12, 0.55), rgba(5, 4, 12, 0) 32%, rgba(5, 4, 12, 0) 68%, rgba(5, 4, 12, 0.55));
+    transition: opacity 1.2s ease;
+  }
+  #intro h1 { font-weight: normal; font-size: clamp(26px, 5vw, 44px); letter-spacing: 0.06em; margin: 0 0 6px;
+              text-shadow: 0 2px 16px rgba(0, 0, 0, 0.9); }
+  #intro p { margin: 0; color: #b9b0d6; font-style: italic; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9); }
+  #start {
+    font: italic 18px Georgia, "Palatino Linotype", serif; color: #2a2150; background: #f4d9a8; border: 0;
+    border-radius: 999px; padding: 12px 28px; cursor: pointer; box-shadow: 0 8px 30px rgba(244, 179, 122, 0.25);
+  }
+  #start:hover, #start:focus-visible { background: #ffe6bd; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #selftest { position: fixed; left: 8px; bottom: 8px; font: 12px ui-monospace, Consolas, monospace; color: #9f9; }
+</style>
+</head>
+<body>
+<canvas id="c" width="320" height="180" aria-label="An orrery: small worlds circling a sun, each ringing a note as it crosses a line of light"></canvas>
+<a id="back" class="ui" href="../index.html">← Claude Studio</a>
+<div id="controls" class="ui" hidden>
+  <button id="mute" type="button" aria-pressed="false" title="sound (M)">♪ on</button>
+  <button id="reset" type="button" title="start over (R)" aria-label="start over">↺</button>
+</div>
+<div id="hint" class="ui">tap the sky to add a world · tap a world to let it go</div>
+<div id="align" class="ui">the planets align</div>
+<div id="clock" class="ui"></div>
+<div id="tip" class="ui"></div>
+<div id="intro" class="ui">
+  <div><h1>A Small Orrery</h1><p>a music box of planets</p></div>
+  <button id="start" type="button">wind it up</button>
+</div>
+<div id="live" class="sr" aria-live="polite"></div>
+<script>
+"use strict";
+// A Small Orrery: a music box of planets. Every world rings as it crosses the line of light below the sun, and its
+// orbit decides its note and its rhythm. Kepler's third law (1619, in a book about the harmony of the world): the
+// square of a year is the cube of its orbit. Here each year is rounded to whole beats, so every note lands on the
+// beat, and worlds that set off together come back into line - all of them at once - every grand year.
+
+// ==== LOGIC BEGIN: pure functions and data only (no DOM, no audio); the Node test evaluates exactly this part ====
+const BEAT = 0.42;                    // seconds per beat; every chime lands on a whole beat
+const TILT = 0.40;                    // the orrery seen from above at an angle: orbits are ellipses this flat
+const R0 = 18;                        // radius of a one-beat orbit in pixels: r = R0 * period^(2/3)
+const MIN_P = 2, MAX_P = 23, MAX_WORLDS = 12, MAX_PER_ORBIT = 2;   // a 23-beat orbit just fits the picture
+const DEFAULT = [3, 4, 5, 7, 10];     // they set off together, so they ring a chord at the first beat and every 420th
+const SCALE = [0, 3, 5, 7, 10];       // A minor pentatonic, semitones above A: any handful of these sounds well together
+const NOTE_NAMES = ["A", "C", "D", "E", "G"];
+const PALETTE = [                     // a world's colour comes from its year, so the same orbit always looks the same
+  [0.55, 0.85, 0.45], [0.95, 0.55, 0.75], [0.72, 0.56, 1.00], [0.65, 0.83, 1.00],
+  [0.92, 0.55, 0.38], [0.35, 0.85, 0.80], [1.00, 0.62, 0.52], [0.98, 0.82, 0.45],
+];
+const radiusFor = p => R0 * Math.pow(p, 2 / 3);
+const periodFor = r => Math.min(MAX_P, Math.max(MIN_P, Math.round(Math.pow(r / R0, 1.5))));
+const degreeFor = p => Math.round(7 - 4 * Math.log2(p));   // a two-beat world sings E5; each doubling of the year sinks four steps
+function freqFor(p) {
+  const d = degreeFor(p), oct = Math.floor(d / 5), step = ((d % 5) + 5) % 5;
+  return 440 * Math.pow(2, oct + SCALE[step] / 12);
+}
+function noteName(p) {                // scientific pitch names: the octave number changes at C, not at A
+  const d = degreeFor(p), oct = Math.floor(d / 5), step = ((d % 5) + 5) % 5;
+  return NOTE_NAMES[step] + (4 + oct + (step >= 1 ? 1 : 0));
+}
+const isPrime = n => { if (n < 2) return false; for (let k = 2; k * k <= n; k++) if (n % k === 0) return false; return true; };
+const sizeFor = p => (p <= 3 ? 2 : p <= 6 ? 3 : p <= 12 ? 4 : 5);
+const velFor = f => 0.2 * Math.pow(440 / f, 0.25);          // low bells a little louder: high notes carry on their own
+function makeWorld(p, k0) {
+  return { p, k0, r: radiusFor(p), f: freqFor(p), note: noteName(p), col: PALETTE[p % 8], rp: sizeFor(p),
+           ring: p >= 7 && isPrime(p),                       // the prime worlds wear rings
+           bands: sizeFor(p) >= 4, pan: ((p * 0.37) % 1) * 0.8 - 0.4,
+           born: null, leaving: null, pulseAt: -99, sx: 0, sy: 0 };
+}
+const angleAt = (w, beat) => Math.PI / 2 + 2 * Math.PI * (beat - w.k0) / w.p;   // pi/2 is the front, where it rings
+const crosses = (w, beat) => (((beat - w.k0) % w.p) + w.p) % w.p === 0;          // whole beats only
+const ringersAt = (ws, beat) => ws.filter(w => w.leaving === null && crosses(w, beat));
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+const grandYear = ps => ps.reduce((a, p) => (a / gcd(a, p)) * p, 1);
+function egcd(a, b) {                 // [g, x, y] with a*x + b*y = g
+  if (!b) return [a, 1, 0];
+  const [g, x, y] = egcd(b, a % b);
+  return [g, y, x - Math.floor(a / b) * y];
+}
+function alignment(ws) {              // the beats at which every world rings at once are rem + k*mod; null if never
+  let mod = 1, rem = 0;
+  for (const w of ws) {
+    const a = ((w.k0 % w.p) + w.p) % w.p;
+    const [g, x] = egcd(mod, w.p);
+    if ((a - rem) % g !== 0) return null;                    // two worlds half a year apart on one orbit never meet
+    const m2 = w.p / g, t = ((((a - rem) / g) * x) % m2 + m2) % m2;
+    rem += mod * t; mod *= m2; rem = ((rem % mod) + mod) % mod;
+  }
+  return { mod, rem };
+}
+function nextAlignment(ws, beat) {    // the first whole beat >= beat at which every world rings together
+  if (ws.length < 2) return null;
+  const al = alignment(ws);
+  if (!al) return null;
+  return al.rem + Math.ceil((beat - al.rem) / al.mod) * al.mod;
+}
+// ==== LOGIC END ====
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const params = new URLSearchParams(location.search);
+const POSTER = params.has("poster"), SELFTEST = params.has("selftest");
+const REDUCED = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// ---- the picture: a small buffer painted in layers every frame - 320x180 on a wide screen, 180x320 held upright ----
+// (upright, a 320x180 picture would be a thin strip with worlds four screen pixels wide: too small to tap)
+let W = 320, H = 180, CX = 160, CY = 86, VS = 1;       // VS shrinks the orbits to fit an upright picture
+const cv = document.getElementById("c");
+const g2d = cv.getContext("2d");
+let img, buf, bg, VIG, GLOW, stars = [], portrait = null;
+const N4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const GOLD = [1.0, 0.84, 0.55], BEAM = [1.0, 0.86, 0.62], ORBIT = [0.62, 0.58, 0.92];
+const SUN_CORE = [1.0, 0.95, 0.80], SUN_EDGE = [1.0, 0.62, 0.32], SUN_GLOW = [1.0, 0.70, 0.42];
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+function set(x, y, c) { x |= 0; y |= 0; if (x >= 0 && x < W && y >= 0 && y < H) { const i = (y * W + x) * 3; buf[i] = c[0]; buf[i + 1] = c[1]; buf[i + 2] = c[2]; } }
+function addc(x, y, c, k) { x |= 0; y |= 0; if (x >= 0 && x < W && y >= 0 && y < H) { const i = (y * W + x) * 3; buf[i] += c[0] * k; buf[i + 1] += c[1] * k; buf[i + 2] += c[2] * k; } }
+function blend(x, y, c, a) { x |= 0; y |= 0; if (x >= 0 && x < W && y >= 0 && y < H) { const i = (y * W + x) * 3; for (let j = 0; j < 3; j++) buf[i + j] += (c[j] - buf[i + j]) * a; } }
+
+const rnd = mulberry32(1619);         // the year of Harmonices Mundi
+function hash2(i, j) {
+  let h = Math.imul(i, 374761393) + Math.imul(j, 668265263) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function vnoise2(x, y) {
+  const i = Math.floor(x), j = Math.floor(y), fx = x - i, fy = y - j;
+  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+  const a = hash2(i, j), b = hash2(i + 1, j), c = hash2(i, j + 1), d = hash2(i + 1, j + 1);
+  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
+}
+function fbm2(x, y) {
+  let s = 0, amp = 1, n = 0;
+  for (let o = 0; o < 5; o++) { s += amp * vnoise2(x, y); n += amp; amp *= 0.5; x *= 2.03; y *= 2.03; }
+  return s / n;
+}
+const TINTS = [[1, 1, 1], [0.75, 0.85, 1], [1, 0.8, 0.9], [1, 0.95, 0.8]];
+function layout() {                   // (re)build everything that depends on the picture's shape; the music carries on
+  const upright = innerHeight > innerWidth * 1.15;
+  if (upright === portrait) return;
+  portrait = upright;
+  if (portrait) { W = 180; H = 320; CX = 90; CY = 150; VS = (W / 2 - 6) / radiusFor(MAX_P); }
+  else { W = 320; H = 180; CX = 160; CY = 86; VS = 1; }
+  cv.width = W; cv.height = H;
+  cv.style.aspectRatio = W + " / " + H;
+  cv.style.width = `min(100vw, calc(100vh * ${W} / ${H}))`;
+  img = g2d.createImageData(W, H);
+  buf = new Float32Array(W * H * 3); bg = new Float32Array(W * H * 3); VIG = new Float32Array(W * H);
+  GLOW = new Float32Array(W * H);     // the sun's glow over the WHOLE picture: cut off at a box, its edge showed
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const d = Math.hypot(x - CX, y - CY);
+    GLOW[y * W + x] = Math.exp(-((d / 12) ** 2)) * 0.55 + Math.exp(-((d / 38) ** 2)) * 0.13;
+  }
+  // what never moves: the sky and a faint diagonal band of nebula, painted once
+  const TOP = [0.016, 0.014, 0.06], MID = [0.05, 0.034, 0.12], LOW = [0.028, 0.02, 0.075];
+  const VIO = [0.36, 0.22, 0.58], TEAL = [0.12, 0.32, 0.46], bw = (34 * Math.min(W, H)) / 180;
+  for (let y = 0; y < H; y++) {
+    const t = y / H, sky = t < 0.5 ? mix(TOP, MID, t / 0.5) : mix(MID, LOW, (t - 0.5) / 0.5);
+    for (let x = 0; x < W; x++) {
+      const band = Math.exp(-(((y - H * (0.19 + (0.6 * x) / W)) / bw) ** 2));
+      const n = fbm2(x * 0.016 + 3.1, y * 0.026 + 7.7);
+      const k = band * Math.max(0, n - 0.38) * 0.62;
+      const col = mix(VIO, TEAL, fbm2(x * 0.021 + 40, y * 0.03 + 9));
+      const i = (y * W + x) * 3;
+      bg[i] = sky[0] + col[0] * k; bg[i + 1] = sky[1] + col[1] * k; bg[i + 2] = sky[2] + col[2] * k;
+    }
+  }
+  const sr = mulberry32(1619 + W);    // the stars have a generator of their own, so the sky is the same every visit
+  stars = [];
+  for (let k = 0, n = Math.round((W * H) / 300); k < n; k++) {
+    const x = Math.floor(sr() * W), y = Math.floor(sr() * H), b = Math.pow(sr(), 2.3);
+    const tint = TINTS[Math.floor(sr() * 4)], ph = sr() * 6.28, sp = 0.5 + sr() * 2;
+    if (Math.hypot((x - CX) / 1.2, y - CY) >= 16) stars.push({ x, y, b, tint, ph, sp });   // none inside the sun
+  }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const u = (x / W - 0.5) * 1.5, v = (y / H - 0.5) * 1.6;
+    VIG[y * W + x] = 1 - 0.5 * (u * u + v * v);
+  }
+}
+layout();
+const GAMMA = new Uint8Array(1024);
+for (let i = 0; i < 1024; i++) GAMMA[i] = Math.round(Math.pow(i / 1023, 1 / 1.1) * 255);
+const SA = TILT, CA = Math.sqrt(1 - TILT * TILT);           // the view: looking down at asin(0.4) = 23.6 degrees
+
+function drawOrbit(p, front, k, col) {
+  const r = radiusFor(p) * VS, n = Math.max(24, Math.round((2 * Math.PI * r) / 4));
+  for (let i = 0; i < n; i++) {
+    const th = (2 * Math.PI * i) / n + 0.13, s = Math.sin(th);
+    if ((s >= 0) !== front) continue;
+    addc(Math.round(CX + r * Math.cos(th)), Math.round(CY + r * TILT * s), col || ORBIT, (front ? 0.24 : 0.14) * k);
+  }
+}
+function drawSun(now, boost) {
+  const flick = boost * (1 + 0.03 * Math.sin(now * 2.1) + 0.02 * Math.sin(now * 5.3));
+  for (let p = 0; p < W * H; p++) {
+    const k = flick * GLOW[p];
+    if (k > 0.0005) { const i = p * 3; buf[i] += SUN_GLOW[0] * k; buf[i + 1] += SUN_GLOW[1] * k; buf[i + 2] += SUN_GLOW[2] * k; }
+  }
+  const R = 6;
+  for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) {
+    const d2 = x * x + y * y;
+    if (d2 > R * R + R * 0.6) continue;
+    const mu = Math.sqrt(Math.max(0, 1 - d2 / (R * R + 1)));
+    const c = mix(SUN_EDGE, SUN_CORE, Math.pow(mu, 0.6));
+    set(CX + x, CY + y, [c[0] * flick, c[1] * flick, c[2] * flick]);
+  }
+}
+const easeOutBack = u => 1 + 2.2 * Math.pow(u - 1, 3) + 1.2 * Math.pow(u - 1, 2);
+function place(w, beat) {
+  const th = angleAt(w, beat), ct = Math.cos(th), st = Math.sin(th);
+  w.sx = CX + w.r * VS * ct; w.sy = CY + w.r * VS * TILT * st;
+  return { w, th, ct, st, back: st < 0 };
+}
+function drawRing(q, rp, half, a) {   // a ring lies in the orbital plane, so it is an ellipse as flat as the orbits
+  const { w } = q, x0 = Math.round(w.sx), y0 = Math.round(w.sy);
+  for (let dy = -Math.ceil(rp * 1.3); dy <= Math.ceil(rp * 1.3); dy++) for (let dx = -Math.ceil(rp * 2.6); dx <= Math.ceil(rp * 2.6); dx++) {
+    const e = Math.hypot(dx, dy / TILT) / rp;
+    if (e < 1.55 || e > 2.45) continue;
+    if ((dy > 0) !== (half === "front")) continue;
+    if (half === "back" && dx * dx + dy * dy <= rp * rp + rp * 0.5) continue;   // the world hides the far side
+    blend(x0 + dx, y0 + dy, [0.95, 0.88, 0.72], a * (0.32 + 0.22 * Math.sin(e * 9)));
+  }
+}
+function drawWorld(q, now, beat) {
+  const w = q.w;
+  let a = 1, grow = 1;
+  if (w.born !== null && now - w.born < 0.6) grow = Math.max(0.05, easeOutBack((now - w.born) / 0.6));
+  if (w.leaving !== null) { const u = Math.min(1, (now - w.leaving) / 0.8); a = 1 - u; grow = 1 + 0.6 * u; }
+  if (a <= 0) return;
+  for (let j = 1; j <= 9; j++) {      // a faint trail
+    const th = angleAt(w, beat - j * 0.006 * w.p);
+    addc(Math.round(CX + w.r * VS * Math.cos(th)), Math.round(CY + w.r * VS * TILT * Math.sin(th)), w.col, 0.1 * (1 - j / 10) * a);
+  }
+  const x0 = Math.round(w.sx), y0 = Math.round(w.sy), rp = w.rp * grow;
+  const pulse = Math.exp(-Math.max(0, now - w.pulseAt) / 0.28);
+  if (pulse > 0.01) {                 // it glows as it rings
+    const R = Math.ceil(rp + 7);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++)
+      addc(x0 + dx, y0 + dy, w.col, 0.75 * pulse * a * Math.exp(-((Math.hypot(dx, dy) / (rp + 2.5)) ** 2)));
+  }
+  if (w.ring) drawRing(q, rp, "back", a);
+  // the lit side faces the sun: worlds in front of it show a crescent, worlds behind it are full. The night side
+  // keeps a dim version of the world's colour, or the worlds in front - the ones ringing - would be black blobs.
+  const s = [-q.ct, q.st * SA, -q.st * CA];
+  const lim = rp * rp + rp * 0.5, R = Math.ceil(rp);
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    if (dx * dx + dy * dy > lim) continue;
+    const nx = dx / (rp + 0.5), ny = -dy / (rp + 0.5), nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+    const lam = Math.max(0, nx * s[0] + ny * s[1] + nz * s[2]);
+    let c = w.col;
+    if (w.bands) c = mix(c, [c[0] * 0.62, c[1] * 0.62, c[2] * 0.7], 0.5 + 0.5 * Math.sin(dy * 1.9 + w.p));
+    const rim = Math.pow(1 - nz, 2) * 0.35;                    // a thin bright edge all round, like a lit atmosphere
+    const k = (0.3 + 0.85 * lam + rim + 0.55 * pulse) * (q.back ? 0.88 : 1);
+    blend(x0 + dx, y0 + dy, [c[0] * k, c[1] * k, c[2] * k], a);
+  }
+  if (w.ring) drawRing(q, rp, "front", a);
+}
+
+// ---- the orrery's state ----------------------------------------------------------------------------------------------
+let worlds = DEFAULT.map(p => makeWorld(p, 0));
+const ripples = [], sparks = [];
+let beamFlash = 0, sunPulse = 0, hoverP = 0, hoverWorld = null, lastNow = 0;
+const pageStart = performance.now() / 1000;
+const POSTER_BEAT = parseFloat(params.get("poster")) || 13.4;
+let actx = null, graph = null, startTime = 0, nextBeat = 0, events = [], wind = null, muted = false, started = false;
+const active = () => worlds.filter(w => w.leaving === null);
+const latency = () => (actx ? (actx.outputLatency || actx.baseLatency || 0) : 0);
+const audioBeat = () => (actx.currentTime - latency() - startTime) / BEAT;
+function currentBeat(now) {
+  if (POSTER) return POSTER_BEAT;
+  if (!started) return POSTER_BEAT + 0.15 * (now - pageStart) / BEAT;      // before it is wound: a slow, silent drift
+  if (wind) {
+    const u = Math.min(1, (now - wind.t0) / wind.dur), e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+    if (u >= 1) wind = null;
+    return wind ? wind.from + (audioBeat() - wind.from) * e : audioBeat();
+  }
+  return audioBeat();
+}
+
+function fire(ev, now) {              // a chime has just become audible: light it up
+  for (const w of ev.worlds) {
+    w.pulseAt = now;
+    const y = CY + w.r * VS * TILT;
+    for (let k = 0; k < 7; k++) {
+      const ang = rnd() * Math.PI * 2, sp = 8 + rnd() * 20;
+      sparks.push({ x: CX, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp * 0.45, t0: now, life: 0.6 + rnd() * 0.6, col: w.col });
+    }
+    ripples.push({ x: CX, y, t0: now, dur: 0.9, rmax: 9 + w.rp * 2, col: w.col });
+  }
+  beamFlash = Math.min(1.5, beamFlash + 0.55);
+  sunPulse = Math.min(0.8, sunPulse + 0.1);
+  if (ev.all) {
+    ripples.push({ x: CX, y: CY, t0: now, dur: 3.4, rmax: radiusFor(MAX_P) * VS + 20, col: GOLD });
+    sunPulse = 1.2;
+    const el = document.getElementById("align");
+    el.style.opacity = 1;
+    setTimeout(() => { el.style.opacity = 0; }, 4500);
+    announce("The planets align.");
+  }
+}
+
+function render(beat, now, dt) {
+  buf.set(bg);
+  for (const s of stars) {
+    const k = (0.2 + 0.8 * s.b) * (0.6 + 0.4 * Math.sin(now * s.sp + s.ph));
+    addc(s.x, s.y, s.tint, k);
+    if (s.b > 0.7) for (const [dx, dy] of N4) blend(s.x + dx, s.y + dy, s.tint, 0.3 * s.b * k);
+  }
+  beamFlash *= Math.exp(-dt / 0.2);
+  for (let y = CY + 6; y < H; y++) {  // the line of light: every world rings as it crosses it
+    const k = (0.085 + 0.18 * beamFlash) * Math.exp(-(y - CY) / 75);
+    addc(CX - 2, y, BEAM, k * 0.25); addc(CX - 1, y, BEAM, k * 0.6); addc(CX, y, BEAM, k);
+    addc(CX + 1, y, BEAM, k * 0.6); addc(CX + 2, y, BEAM, k * 0.25);
+  }
+  const orbits = [...new Set(worlds.map(w => w.p))];
+  const preview = hoverP && !hoverWorld && started && !POSTER;
+  for (const p of orbits) drawOrbit(p, false, 1);
+  if (preview) drawOrbit(hoverP, false, 2.6, GOLD);
+  const placed = worlds.map(w => place(w, beat));
+  for (const q of placed) if (q.back) drawWorld(q, now, beat);
+  sunPulse *= Math.exp(-dt / 0.35);
+  drawSun(now, 1 + sunPulse);
+  for (const p of orbits) {
+    drawOrbit(p, true, 1);
+    addc(CX, Math.round(CY + radiusFor(p) * VS * TILT), BEAM, 0.18);   // where each orbit meets the light
+  }
+  if (preview) drawOrbit(hoverP, true, 2.6, GOLD);
+  for (const q of placed) if (!q.back) drawWorld(q, now, beat);
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const rp = ripples[i], u = (now - rp.t0) / rp.dur;
+    if (u >= 1) { ripples.splice(i, 1); continue; }
+    const rr = rp.rmax * (1 - Math.pow(1 - u, 2)), n = Math.max(10, Math.round(rr * 5));
+    for (let k = 0; k < n; k++) {
+      const th = (2 * Math.PI * k) / n;
+      addc(Math.round(rp.x + rr * Math.cos(th)), Math.round(rp.y + rr * TILT * Math.sin(th)), rp.col, 0.32 * (1 - u));
+    }
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const sp = sparks[i], age = now - sp.t0;
+    if (age >= sp.life) { sparks.splice(i, 1); continue; }
+    sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.vx *= 0.97; sp.vy *= 0.97;
+    addc(Math.round(sp.x), Math.round(sp.y), sp.col, 0.9 * (1 - age / sp.life));
+  }
+  for (let p = 0; p < W * H; p++) {   // vignette, then out to the screen
+    const k = VIG[p], i = p * 3, o = p * 4;
+    for (let j = 0; j < 3; j++) {
+      const v = buf[i + j] * k;
+      img.data[o + j] = GAMMA[v <= 0 ? 0 : v >= 1 ? 1023 : (v * 1023) | 0];
+    }
+    img.data[o + 3] = 255;
+  }
+  g2d.putImageData(img, 0, 0);
+}
+
+function frame(ms) {
+  const now = ms / 1000, dt = Math.min(0.05, lastNow ? now - lastNow : 0.016);
+  lastNow = now;
+  if (actx) {
+    const heard = actx.currentTime - latency();
+    while (events.length && events[0].t <= heard) fire(events.shift(), now);
+  }
+  worlds = worlds.filter(w => w.leaving === null || now - w.leaving < 0.85);
+  render(currentBeat(now), now, dt);
+  if (!POSTER) requestAnimationFrame(frame);
+}
+
+// ---- the sound: a music box. Bells (a sine and two inharmonic partials), a little room, a quiet open fifth -----
+const PARTIALS = [[1, 1, 1], [2, 0.1, 0.55], [2.756, 0.2, 0.38], [5.404, 0.06, 0.18]];   // ratio, level, decay share
+function impulse(ac, secs) {
+  const n = Math.floor(ac.sampleRate * secs), b = ac.createBuffer(2, n, ac.sampleRate), r = mulberry32(42);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = b.getChannelData(ch);
+    let lp = 0;
+    for (let i = 0; i < n; i++) {
+      lp += (r() * 2 - 1 - lp) * 0.35;                      // a little darker than white noise
+      d[i] = lp * Math.exp(-(i / ac.sampleRate) * 2.6) * (i < 60 ? i / 60 : 1);
+    }
+  }
+  return b;
+}
+function buildGraph(ac) {
+  const master = ac.createGain(); master.gain.value = 0.85;
+  const comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -14; comp.knee.value = 12; comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.25;
+  master.connect(comp); comp.connect(ac.destination);
+  const dry = ac.createGain(); dry.gain.value = 0.9; dry.connect(master);
+  const verb = ac.createConvolver(); verb.buffer = impulse(ac, 2.8);
+  const wet = ac.createGain(); wet.gain.value = 0.32; verb.connect(wet); wet.connect(master);
+  function out(node, pan) {
+    const p = ac.createStereoPanner ? ac.createStereoPanner() : null;
+    if (p) { p.pan.value = pan; node.connect(p); p.connect(dry); p.connect(verb); return p; }
+    node.connect(dry); node.connect(verb); return null;
+  }
+  function voice(t, f, vel, pan) {
+    const sum = ac.createGain(), p = out(sum, pan);
+    const dec = Math.min(4.2, Math.max(1.3, 2.6 * Math.sqrt(440 / f)));      // low bells ring longer
+    let last = null;
+    for (const [ratio, level, share] of PARTIALS) {
+      const o = ac.createOscillator(), gn = ac.createGain();
+      o.frequency.value = f * ratio;
+      gn.gain.setValueAtTime(0.0001, t);
+      gn.gain.exponentialRampToValueAtTime(vel * level, t + 0.005);
+      gn.gain.exponentialRampToValueAtTime(0.0001, t + dec * share);
+      o.connect(gn); gn.connect(sum);
+      o.start(t); o.stop(t + dec * share + 0.05);
+      if (share === 1) last = o;
+    }
+    last.onended = () => { sum.disconnect(); if (p) p.disconnect(); };
+  }
+  function glide(t, f) {              // letting a world go: its note, sinking an octave
+    const o = ac.createOscillator(), lp = ac.createBiquadFilter(), gn = ac.createGain();
+    o.type = "triangle"; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f / 2, t + 0.9);
+    lp.type = "lowpass"; lp.frequency.value = 1800;
+    gn.gain.setValueAtTime(0.0001, t); gn.gain.exponentialRampToValueAtTime(0.09, t + 0.03); gn.gain.exponentialRampToValueAtTime(0.0001, t + 1.0);
+    o.connect(lp); lp.connect(gn); out(gn, 0);
+    o.start(t); o.stop(t + 1.05);
+  }
+  function drone() {                  // A and E, very quietly, breathing
+    const lp = ac.createBiquadFilter(), gn = ac.createGain();
+    lp.type = "lowpass"; lp.frequency.value = 520; lp.Q.value = 0.4;
+    gn.gain.value = 0.0001;
+    for (const [f, a] of [[110, 1], [164.81, 0.7], [220.5, 0.25]]) {
+      const o = ac.createOscillator(), og = ac.createGain();
+      o.type = "triangle"; o.frequency.value = f; og.gain.value = a;
+      o.connect(og); og.connect(lp); o.start();
+    }
+    const lfo = ac.createOscillator(), lg = ac.createGain();
+    lfo.frequency.value = 0.07; lg.gain.value = 0.008; lfo.connect(lg); lg.connect(gn.gain); lfo.start();
+    lp.connect(gn); out(gn, 0);
+    gn.gain.setTargetAtTime(0.022, ac.currentTime + 0.3, 2.5);
+  }
+  return { master, voice, glide, drone };
+}
+function tick() {                     // the scheduler: every bell is booked a little ahead, at the exact beat
+  if (!actx || actx.state !== "running") return;
+  const ahead = actx.currentTime + 0.15;
+  while (startTime + nextBeat * BEAT < ahead) {
+    const t = startTime + nextBeat * BEAT, ring = ringersAt(worlds, nextBeat);
+    if (ring.length) {
+      if (t >= actx.currentTime - 0.01) for (const w of ring) graph.voice(t, w.f, velFor(w.f), w.pan);
+      events.push({ t, beat: nextBeat, worlds: ring, all: nextBeat > 0 && ring.length >= 3 && ring.length === active().length });
+    }
+    nextBeat++;
+  }
+}
+
+// ---- playing with it ---------------------------------------------------------------------------------------------
+const hintEl = document.getElementById("hint"), clockEl = document.getElementById("clock"), tipEl = document.getElementById("tip");
+const DEFAULT_HINT = hintEl.textContent;
+let hintTimer = 0;
+function hint(msg, secs) {
+  hintEl.textContent = msg || DEFAULT_HINT;
+  hintEl.style.opacity = 1;
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hintEl.style.opacity = 0; }, (secs || 3) * 1000);
+}
+function announce(msg) { document.getElementById("live").textContent = msg; }
+async function start() {
+  if (started) return;
+  started = true;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  actx = new AC();
+  try { await actx.resume(); } catch (e) { /* stays suspended until the next gesture */ }
+  graph = buildGraph(actx);
+  graph.drone();
+  if (muted) graph.master.gain.value = 0;
+  windUp(lastNow || performance.now() / 1000);
+  setInterval(tick, 25);
+  document.getElementById("intro").style.opacity = 0;
+  setTimeout(() => { document.getElementById("intro").hidden = true; }, 1200);
+  document.getElementById("controls").hidden = false;
+  hint(null, 12);
+  announce("The orrery is turning. Five worlds; tap the sky to add one.");
+}
+function windUp(now) {                // the worlds spin back into line, then the first beat is a chord
+  const dur = REDUCED ? 0.01 : 1.4;
+  const from = wind ? currentBeat(now) : (started && actx && startTime ? currentBeat(now) : POSTER_BEAT + 0.15 * (now - pageStart) / BEAT);
+  startTime = actx.currentTime + dur + 2.2 * BEAT;
+  nextBeat = 0; events = [];
+  wind = { from, t0: now, dur };
+}
+function addWorld(p) {
+  const act = active();
+  if (act.length >= MAX_WORLDS) { hint("the orrery is full: let a world go first"); return; }
+  const same = act.filter(w => w.p === p).length;
+  if (same >= MAX_PER_ORBIT) { hint("two worlds already share that orbit"); return; }
+  const w = makeWorld(p, same ? Math.floor(p / 2) : 0);    // a second world on one orbit runs half a year behind
+  w.born = lastNow;
+  worlds.push(w);
+  if (graph) graph.voice(actx.currentTime + 0.02, w.f, velFor(w.f) * 0.55, w.pan);
+  announce(`A world with a ${p}-beat year joined. It sings ${w.note}.`);
+}
+function letGo(w) {
+  w.leaving = lastNow;
+  if (graph) graph.glide(actx.currentTime + 0.01, w.f);
+  announce(`The ${w.p}-beat world was let go.`);
+}
+function sunHum() {                   // tap the sun: it hums every world's note, low to high
+  if (!graph) return;
+  const fs = [...new Set(active().map(w => w.f))].sort((a, b) => a - b);
+  fs.forEach((f, i) => graph.voice(actx.currentTime + 0.03 + i * 0.09, f, velFor(f) * 0.7, (i / Math.max(1, fs.length - 1)) * 0.8 - 0.4));
+  sunPulse = 0.9;
+}
+function toCanvas(e) {
+  const b = cv.getBoundingClientRect();
+  return [((e.clientX - b.left) * W) / b.width, ((e.clientY - b.top) * H) / b.height];
+}
+function worldAt(x, y) {
+  let best = null, bd = 1e9;
+  for (const w of worlds) {
+    if (w.leaving !== null) continue;
+    const d = Math.hypot(x - w.sx, y - w.sy);
+    if (d <= w.rp + 4 && d < bd) { best = w; bd = d; }
+  }
+  return best;
+}
+cv.addEventListener("pointerdown", e => {
+  if (!started) { start(); return; }
+  const [x, y] = toCanvas(e), w = worldAt(x, y);
+  if (w) { letGo(w); return; }
+  if (Math.hypot(x - CX, y - CY) < 10) { sunHum(); return; }
+  addWorld(periodFor(Math.hypot(x - CX, (y - CY) / TILT) / VS));
+});
+cv.addEventListener("pointermove", e => {
+  if (e.pointerType !== "mouse" || !started) return;
+  const [x, y] = toCanvas(e);
+  hoverWorld = worldAt(x, y);
+  hoverP = Math.hypot(x - CX, y - CY) < 10 ? 0 : periodFor(Math.hypot(x - CX, (y - CY) / TILT) / VS);
+  tipEl.style.left = e.clientX + "px"; tipEl.style.top = e.clientY + "px";
+  tipEl.textContent = hoverWorld ? `a ${hoverWorld.p}-beat world · ${hoverWorld.note} · tap to let it go`
+                    : hoverP ? `a ${hoverP}-beat year · ${noteName(hoverP)}` : "the sun · tap to hear every world";
+  tipEl.style.opacity = 0.9;
+});
+cv.addEventListener("pointerleave", () => { hoverP = 0; hoverWorld = null; tipEl.style.opacity = 0; });
+document.getElementById("intro").addEventListener("click", start);
+document.getElementById("mute").addEventListener("click", toggleMute);
+document.getElementById("reset").addEventListener("click", reset);
+function toggleMute() {
+  muted = !muted;
+  const b = document.getElementById("mute");
+  b.textContent = muted ? "♪ off" : "♪ on";
+  b.setAttribute("aria-pressed", String(muted));
+  if (graph) graph.master.gain.setTargetAtTime(muted ? 0 : 0.85, actx.currentTime, 0.05);
+}
+function reset() {
+  if (!started) return;
+  worlds = DEFAULT.map(p => makeWorld(p, 0));
+  windUp(lastNow);
+  announce("Back to the first five worlds.");
+}
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "BUTTON" && (e.key === " " || e.key === "Enter")) return;
+  if (!started) { if (e.key === " " || e.key === "Enter") { e.preventDefault(); start(); } return; }
+  const k = e.key.toLowerCase();
+  if (k === " ") { e.preventDefault(); if (actx.state === "running") actx.suspend(); else actx.resume(); }
+  else if (k === "m") toggleMute();
+  else if (k === "r") reset();
+  else if (k === "n") {               // a new world on a random free orbit, for anyone not using a pointer
+    const free = [];
+    for (let p = MIN_P; p <= 20; p++) if (active().filter(w => w.p === p).length === 0) free.push(p);
+    if (free.length) addWorld(free[Math.floor(Math.random() * free.length)]);
+  } else if (k === "backspace" || k === "delete") {
+    const act = active();
+    if (act.length) letGo(act[act.length - 1]);
+  }
+});
+addEventListener("resize", () => {   // turning a phone swaps the picture's shape; the worlds and the music carry on
+  layout();
+  if (POSTER) render(POSTER_BEAT, 3.0, 0.016);
+});
+document.addEventListener("visibilitychange", () => {   // looking away stops the music box; time stops with it
+  if (!actx) return;
+  if (document.hidden) actx.suspend(); else actx.resume();
+});
+setInterval(() => {                   // when do they next all ring together?
+  if (!started || POSTER) return;
+  const act = active(), b = currentBeat(lastNow), next = nextAlignment(act, Math.ceil(b));
+  const secs = next === null ? Infinity : (next - b) * BEAT;
+  if (act.length >= 3 && secs < 7200 && !wind) {
+    const m = Math.floor(secs / 60), s = Math.floor(secs % 60);
+    clockEl.textContent = `the planets align in ${m}:${String(s).padStart(2, "0")}`;
+    clockEl.style.opacity = 0.6;
+  } else clockEl.style.opacity = 0;
+}, 500);
+
+// ---- poster and self-test modes ----------------------------------------------------------------------------------
+if (POSTER) {                         // ?poster[=beat]: one still frame, no sound, nothing on top
+  for (const id of ["intro", "back", "hint", "controls"]) document.getElementById(id).hidden = true;
+  lastNow = 0;
+  render(POSTER_BEAT, 3.0, 0.016);
+}
+async function selftest() {           // ?selftest: render 12 s offline through the real voice and report the numbers
+  const out = document.createElement("pre");
+  out.id = "selftest"; out.textContent = "SELFTEST running";
+  document.body.appendChild(out);
+  try {
+    const sr = 44100, secs = 12;
+    const oc = new OfflineAudioContext(2, sr * secs, sr), gr = buildGraph(oc), ws = DEFAULT.map(p => makeWorld(p, 0));
+    gr.drone();
+    let notes = 0;
+    for (let b = 0; 0.1 + b * BEAT < secs - 0.5; b++) for (const w of ringersAt(ws, b)) { gr.voice(0.1 + b * BEAT, w.f, velFor(w.f), w.pan); notes++; }
+    gr.glide(6, 440);
+    const res = await oc.startRendering();
+    let peak = 0, sum = 0, bad = 0, n = 0;
+    for (let ch = 0; ch < res.numberOfChannels; ch++) {
+      const d = res.getChannelData(ch);
+      for (let i = 0; i < d.length; i++) { const v = d[i]; if (!Number.isFinite(v)) bad++; else { peak = Math.max(peak, Math.abs(v)); sum += v * v; n++; } }
+    }
+    out.textContent = `SELFTEST notes=${notes} peak=${peak.toFixed(3)} rms=${Math.sqrt(sum / n).toFixed(4)} nonfinite=${bad} samples=${res.length}`;
+  } catch (err) {
+    out.textContent = "SELFTEST error " + (err && err.message ? err.message : err);
+  }
+  console.log(out.textContent);
+}
+if (SELFTEST) selftest();
+if (!POSTER) requestAnimationFrame(frame);
+</script>
+</body>
+</html>
