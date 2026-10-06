@@ -1,4 +1,4 @@
-"""Night Shift - painted for the top of Striker's website, where it sits behind "Welcome To My Website".
+"""Night Shift - painted for the top of Striker's website (Striker's Outpost), where it sits behind the site's name.
 
 Somewhere under the aurora a cabin keeps one window lit: someone inside is taking a world apart to see how it
 works. The left half is kept quiet (sky, still water) because that is where the site's words sit; the story is on

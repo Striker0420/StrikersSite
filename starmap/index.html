@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Star Map</title>
+<meta name="description" content="Places visited in No Man's Sky: every system's star, race, economy and planets, with portal glyphs to go there.">
+<style>
+  :root {
+    --bg: #0d0b1a; --panel: #17142a; --panel2: #1e1a36; --line: #2b2546; --ink: #ece7f5; --muted: #a99fc4;
+    --gold: #f4d9a8; --accent: #f4b37a;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0; color: var(--ink); font: 16px/1.5 Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    background: radial-gradient(1200px 520px at 50% -12%, #241d45 0%, var(--bg) 62%) fixed, var(--bg);
+    padding: 22px 18px 60px;
+  }
+  [hidden] { display: none !important; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 18px; margin-bottom: 14px; }
+  h1 { font-weight: normal; letter-spacing: 0.05em; font-size: 2rem; margin: 0; }
+  .sub { color: var(--muted); font-style: italic; margin: 0; flex: 1 1 260px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tab, .chip, button.small {
+    font: 14px/1 Georgia, serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 12px; cursor: pointer;
+  }
+  .tab[aria-selected="true"] { background: var(--gold); color: #2a2150; border-color: var(--gold); }
+  .tab .n { color: var(--muted); font-size: 12px; margin-left: 4px; }
+  .tab[aria-selected="true"] .n { color: #5b4f7d; }
+  input[type="search"] {
+    flex: 1 1 240px; font: 15px Georgia, serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 12px;
+  }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .mapbox { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  canvas#map { display: block; width: 100%; aspect-ratio: 1 / 1; touch-action: none; cursor: grab; }
+  canvas#map.dragging { cursor: grabbing; }
+  .mapui { position: absolute; right: 8px; top: 8px; display: flex; gap: 6px; }
+  .mapui button { font: 15px/1 Georgia, serif; width: 34px; height: 34px; border-radius: 8px; border: 1px solid var(--line);
+                  background: rgba(23, 20, 42, 0.85); color: var(--ink); cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 8px 12px; margin: 0; font-size: 13px; color: var(--muted);
+            border-top: 1px solid var(--line); }
+  .dot { display: inline-block; width: 9px; height: 9px; margin-right: 5px; vertical-align: 0; }
+  .ring { outline: 1px solid var(--ink); outline-offset: 2px; }
+  #tip { position: absolute; pointer-events: none; font: 13px/1.3 Georgia, serif; background: rgba(13, 11, 26, 0.92);
+         border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; white-space: nowrap; }
+  #card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px 18px; min-height: 200px; }
+  #card h2 { font-weight: normal; font-size: 1.4rem; margin: 0 0 2px; }
+  .where { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+  .code { font-family: ui-monospace, Consolas, monospace; letter-spacing: 0.04em; }
+  .facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+  .facts li { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 3px 9px; font-size: 14px; }
+  .facts b { font-weight: normal; color: var(--muted); }
+  h3 { font-weight: normal; font-size: 1rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 16px 0 8px; }
+  .planets { display: flex; flex-direction: column; gap: 6px; }
+  .planet { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; font: 15px Georgia, serif;
+            color: var(--ink); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; }
+  .planet[aria-pressed="true"] { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+  .planet .num { font-family: ui-monospace, Consolas, monospace; color: var(--muted); width: 1.2em; }
+  .planet .pname { flex: 1; }
+  .biome { font-size: 12px; border-radius: 999px; padding: 2px 8px; color: #120f22; white-space: nowrap; }
+  .portal { background: #120f22; border: 1px solid var(--line); border-radius: 10px; padding: 12px; margin-top: 4px; }
+  .portal .for { font-size: 14px; color: var(--muted); margin: 0 0 8px; }
+  .glyphs { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; }
+  .g { display: flex; flex-direction: column; align-items: center; background: #1b1733; border-radius: 6px; padding: 3px 0 2px; }
+  .g img { width: 100%; max-width: 36px; aspect-ratio: 1 / 1; }
+  .g span { font: 11px ui-monospace, Consolas, monospace; color: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+  .hex { font: 16px ui-monospace, Consolas, monospace; letter-spacing: 0.08em; color: var(--gold); }
+  button.small { padding: 6px 12px; font-size: 13px; }
+  button.small.primary { background: var(--gold); color: #2a2150; border-color: var(--gold); }
+  .people { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+  .people li { display: inline-flex; align-items: center; gap: 6px; background: var(--panel2); border: 1px solid var(--line);
+               border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 14px; }
+  .people .pn { font-style: italic; }
+  .plat { font: 11px/1 ui-monospace, Consolas, monospace; border-radius: 999px; padding: 3px 7px; color: #fff; }
+  .plat-steam { background: #1b5f8c; } .plat-playstation { background: #0058b0; } .plat-xbox { background: #127d12; }
+  .plat-switch { background: #c4111f; } .plat-gog { background: #7a2f86; }
+  .finds { color: var(--muted); font-size: 12px; padding-right: 6px; }
+  .note { color: var(--muted); font-size: 13px; }
+  .empty { color: var(--muted); font-style: italic; }
+  .list { margin-top: 18px; }
+  .list h3 { margin-top: 0; }
+  .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+  .item { text-align: left; font: 14px/1.35 Georgia, serif; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+          border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+  .item[aria-current="true"] { border-color: var(--gold); }
+  .item .t { display: block; font-size: 15px; }
+  .item .m { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  footer { margin-top: 26px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--gold); color: #2a2150;
+           border-radius: 999px; padding: 8px 16px; font-size: 14px; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Star Map</h1>
+    <p class="sub">places visited in No Man's Sky · tap a system for its portal glyphs</p>
+  </header>
+  <div class="toolbar">
+    <div class="tabs" id="tabs" role="tablist" aria-label="Galaxy"></div>
+    <input type="search" id="q" placeholder="search planets, systems, biomes, players, platforms" aria-label="Search">
+  </div>
+  <div class="layout">
+    <section class="mapbox" aria-label="Galaxy map">
+      <canvas id="map" aria-label="Top-down map of the galaxy: each dot is a visited system. Use the list below the map to choose one with a keyboard."></canvas>
+      <div class="mapui">
+        <button type="button" id="zin" aria-label="Zoom in">+</button>
+        <button type="button" id="zout" aria-label="Zoom out">−</button>
+        <button type="button" id="fit" aria-label="Show every system">⤢</button>
+      </div>
+      <div id="tip" hidden></div>
+      <p class="legend" id="legend"></p>
+    </section>
+    <aside id="card" aria-live="polite"><p class="empty">Loading the map…</p></aside>
+  </div>
+  <section class="list">
+    <h3 id="listTitle">Systems</h3>
+    <div class="items" id="items"></div>
+  </section>
+  <footer id="foot"></footer>
+</div>
+<div id="toast" role="status"></div>
+<script>
+"use strict";
+// A Star Map for the web: the systems someone has visited in No Man's Sky, exported with their names (and their
+// friends') left out. Each dot is a system; its card gives the star, the race, the economy, the planets and, for
+// each planet, the twelve portal glyphs. A link can open the map on one system: #<galaxy>/<XXXX:YYYY:ZZZZ:SSSS>[/<planet>].
+
+// ---- addresses: the same packing the game uses -------------------------------------------------------------------
+// glyphs: P SSS YY ZZZ XXX - planet, system index, then the voxels Y, Z, X as two's complement (8, 12, 12 bits)
+// galactic coordinates: XXXX:YYYY:ZZZZ:SSSS - the same voxels BIASED by 0x7FF / 0x7F / 0x7FF, system plain
+// ==== ADDRESS BEGIN (pure; the test runs exactly this part) ====
+function hexBits(v, bits) {
+  const m = 2 ** bits;
+  return ((((v % m) + m) % m)).toString(16).toUpperCase().padStart(bits / 4, "0");
+}
+function portalHex(s, planet) {
+  return hexBits(planet, 4) + hexBits(s.s, 12) + hexBits(s.y, 8) + hexBits(s.z, 12) + hexBits(s.x, 12);
+}
+function galacticCoords(s) {
+  const h4 = v => v.toString(16).toUpperCase().padStart(4, "0");
+  return [h4(s.x + 0x7FF), h4(s.y + 0x7F), h4(s.z + 0x7FF), h4(s.s)].join(":");
+}
+function parseCoords(text) {
+  const m = /^([0-9A-F]{4}):([0-9A-F]{4}):([0-9A-F]{4}):([0-9A-F]{4})$/i.exec(text || "");
+  if (!m) return null;
+  const v = m.slice(1).map(h => parseInt(h, 16));
+  return { x: (v[0] & 0xFFF) - 0x7FF, y: (v[1] & 0xFF) - 0x7F, z: (v[2] & 0xFFF) - 0x7FF, s: v[3] & 0xFFF };
+}
+// ==== ADDRESS END ====
+
+// strong, well-separated hues: the first palette's purple and its "not recorded" lavender were nearly the same colour
+const STAR_COL = { Yellow: "#ffd23f", Green: "#3ee07a", Blue: "#4aa8ff", Red: "#ff5546", Purple: "#b464ff" };
+const UNKNOWN_COL = "#8f89a8";        // drawn HOLLOW and smaller, so "we never read its star" cannot pass for a colour
+const BIOME_COL = {
+  Lush: "#86d96f", Toxic: "#c2e64e", Scorched: "#ffa25a", Radioactive: "#e2f55a", Frozen: "#aee0ff", Barren: "#d2b081",
+  Dead: "#a19fae", Weird: "#ff86de", Red: "#ff7474", Green: "#74ffa2", Blue: "#74b9ff", Swamp: "#8fb878", Lava: "#ff6a3a",
+  Waterworld: "#5cbcff", "Gas giant": "#e8bd86", Test: "#999999", All: "#999999",
+};
+const $ = id => document.getElementById(id);
+let DATA = null, galaxy = 0, shown = [], selected = null, planetNo = 1, query = "";
+
+// ---- the glyphs: the game's own pictures (glyphs/0.png ... F.png, from its UI textures), one per hex digit ----------
+const GLYPH_NAMES = ["Sunset", "Bird", "Face", "Diplo", "Eclipse", "Balloon", "Boat", "Bug",
+                     "Dragonfly", "Galaxy", "Voxel", "Fish", "Tent", "Rocket", "Tree", "Atlas"];
+function glyphStrip(hex) {
+  return '<div class="glyphs" role="img" aria-label="Portal glyphs: ' +
+    [...hex].map(d => GLYPH_NAMES[parseInt(d, 16)]).join(", ") + '">' +
+    [...hex].map(d => `<div class="g" title="${GLYPH_NAMES[parseInt(d, 16)]}"><img src="glyphs/${d}.png" alt=""><span>${d}</span></div>`).join("") +
+    "</div>";
+}
+
+// ---- what a system is called, and what it is ----------------------------------------------------------------------
+const titleOf = s => s.title || "System " + s.s.toString(16).toUpperCase().padStart(3, "0");
+const esc = t => String(t).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function haystack(s) {
+  return [titleOf(s), s.star, s.race, s.economy, s.wealth, s.conflict, galacticCoords(s),
+          ...s.planets.flatMap(p => [p.name, p.biome]), ...s.found_by.flatMap(p => [p.name, p.on])].filter(Boolean).join(" ").toLowerCase();
+}
+const matches = s => !query || s._hay.includes(query);
+
+// ---- the map ----------------------------------------------------------------------------------------------------------
+const cv = $("map"), ctx = cv.getContext("2d");
+let dpr = 1, view = { cx: 0, cz: 0, k: 0.12 }, backdrop = null;
+function makeBackdrop(g) {          // the galaxy itself, seeded by its number: 256 x 256, one pixel per 16 voxels
+  const N = 256, c = document.createElement("canvas");
+  c.width = N; c.height = N;
+  const im = c.getContext("2d").createImageData(N, N);
+  let seed = (g + 1) * 2654435761 >>> 0;
+  const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const arms = 2 + (g % 3), twist = 3.2 + rnd() * 1.6, phase = rnd() * 6.283;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const u = (x - N / 2) / (N / 2), v = (y - N / 2) / (N / 2), r = Math.hypot(u, v), a = Math.atan2(v, u);
+    if (r > 1.02) continue;
+    const arm = Math.pow(0.5 + 0.5 * Math.cos(arms * (a - twist * Math.log(r + 0.08)) + phase), 3);
+    const core = Math.exp(-((r / 0.16) ** 2));
+    const k = Math.max(0, (0.22 * arm * (1 - r) + 0.9 * core) * (0.75 + 0.5 * rnd()));
+    const i = (y * N + x) * 4;
+    im.data[i] = 120 * k + 60 * core; im.data[i + 1] = 90 * k + 40 * core; im.data[i + 2] = 170 * k + 20 * core;
+    im.data[i + 3] = Math.min(255, 255 * k * 1.4);
+  }
+  for (let n = 0; n < 900; n++) {     // faint scenery stars, thicker toward the core - kept DIM: at full strength they
+    const r = Math.pow(rnd(), 1.6), a = rnd() * 6.283, x = Math.round(N / 2 + r * N / 2 * Math.cos(a)), y = Math.round(N / 2 + r * N / 2 * Math.sin(a));
+    if (x < 0 || y < 0 || x >= N || y >= N) continue;   // were the same size as a real system and read as places visited
+    const i = (y * N + x) * 4, b = 40 + 50 * rnd() ** 3;
+    im.data[i] = Math.max(im.data[i], b); im.data[i + 1] = Math.max(im.data[i + 1], b); im.data[i + 2] = Math.max(im.data[i + 2], b + 14);
+    im.data[i + 3] = Math.max(im.data[i + 3], 110);
+  }
+  c.getContext("2d").putImageData(im, 0, 0);
+  return c;
+}
+function sizeCanvas() {                // true when the backing size changed
+  dpr = Math.min(3, window.devicePixelRatio || 1);
+  const r = cv.getBoundingClientRect(), w = Math.round(r.width * dpr), h = Math.round(r.height * dpr);
+  // ⚠️ assigning width or height WIPES the canvas even when the value is unchanged: the first size notification
+  // re-set the same size after the first paint and left the map blank for a frame (on a phone, in every screenshot)
+  if (cv.width === w && cv.height === h) return false;
+  cv.width = w; cv.height = h;
+  return true;
+}
+const W = () => cv.width / dpr, H = () => cv.height / dpr;
+const toScreen = (x, z) => [(x - view.cx) * view.k + W() / 2, (z - view.cz) * view.k + H() / 2];
+const toWorld = (sx, sy) => [(sx - W() / 2) / view.k + view.cx, (sy - H() / 2) / view.k + view.cz];
+const MIN_K = () => Math.min(W(), H()) / 4400, MAX_K = 4;
+function clampView() {
+  view.k = Math.min(MAX_K, Math.max(MIN_K(), view.k));
+  view.cx = Math.max(-2100, Math.min(2100, view.cx)); view.cz = Math.max(-2100, Math.min(2100, view.cz));
+}
+let drawQueued = false;
+function draw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => { drawQueued = false; paint(); });
+}
+function paint() {
+  const w = W(), h = H();
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#0b0918"; ctx.fillRect(0, 0, w, h);
+  if (backdrop) {                   // chunky on purpose: one pixel per 16 voxels
+    const [x0, y0] = toScreen(-2048, -2048), [x1, y1] = toScreen(2048, 2048);
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(backdrop, x0, y0, x1 - x0, y1 - y0);
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = "rgba(169, 159, 196, 0.16)"; ctx.lineWidth = 1;
+  const [ox, oy] = toScreen(0, 0);
+  for (const r of [512, 1024, 1536, 2048]) { ctx.beginPath(); ctx.arc(ox, oy, r * view.k, 0, 6.2832); ctx.stroke(); }
+  ctx.font = "12px Georgia, serif"; ctx.textAlign = "center";
+  if (2048 * view.k > 60) {          // outlined, or it vanishes into the core's own glow
+    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(11, 9, 24, 0.85)"; ctx.strokeText("the core", ox, oy + 4);
+    ctx.fillStyle = "rgba(244, 217, 168, 0.85)"; ctx.fillText("the core", ox, oy + 4); ctx.lineWidth = 1;
+  }
+  const sz = Math.max(4, Math.min(9, 3 + view.k * 6));
+  for (const s of shown) {          // dimmed first, so matches draw on top
+    if (matches(s)) continue;
+    const [x, y] = toScreen(s.x, s.z);
+    ctx.fillStyle = "rgba(185, 176, 214, 0.25)";
+    ctx.fillRect(Math.round(x - sz / 2), Math.round(y - sz / 2), sz, sz);
+  }
+  const dot = s => {
+    const [x, y] = toScreen(s.x, s.z);
+    if (x < -20 || y < -20 || x > w + 20 || y > h + 20) return;
+    const col = STAR_COL[s.star];
+    const d = col ? sz + 1 : sz - 1, x0 = Math.round(x - d / 2), y0 = Math.round(y - d / 2);
+    if (s.station) {                  // a faint ring: 88 of 176 systems have one, so it must not outshout the colours
+      ctx.strokeStyle = "rgba(236, 231, 245, 0.32)"; ctx.lineWidth = 1;
+      ctx.strokeRect(x0 - 2.5, y0 - 2.5, d + 5, d + 5);
+    }
+    if (col) {                        // a dark edge keeps a colour readable over the glow of the core
+      ctx.fillStyle = "rgba(8, 6, 18, 0.9)"; ctx.fillRect(x0 - 1, y0 - 1, d + 2, d + 2);
+      ctx.fillStyle = col; ctx.fillRect(x0, y0, d, d);
+    } else {
+      ctx.strokeStyle = UNKNOWN_COL; ctx.lineWidth = 1; ctx.strokeRect(x0 + 0.5, y0 + 0.5, d - 1, d - 1);
+    }
+  };
+  for (const s of shown) if (matches(s) && s !== selected) dot(s);
+  // the chosen system LAST: several systems can share one spot, and drawn in list order a neighbour painted over
+  // it - the brackets framed System 211 (yellow) around System 0A6's red dot
+  if (selected && selected.g === galaxy) dot(selected);
+  if (selected && selected.g === galaxy) {   // corner brackets round the chosen system
+    const [x, y] = toScreen(selected.x, selected.z), r = sz / 2 + 7, l = 5;
+    ctx.strokeStyle = "#f4d9a8"; ctx.lineWidth = 2;
+    for (const [dx, dy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      ctx.beginPath(); ctx.moveTo(x + dx * r, y + dy * (r - l)); ctx.lineTo(x + dx * r, y + dy * r); ctx.lineTo(x + dx * (r - l), y + dy * r); ctx.stroke();
+    }
+  }
+}
+function fitView(list) {
+  const pts = list.length ? list : [{ x: 0, z: 0 }];
+  let x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x));
+  let z0 = Math.min(...pts.map(p => p.z)), z1 = Math.max(...pts.map(p => p.z));
+  const span = Math.max(300, x1 - x0, z1 - z0) * 1.25;
+  view = { cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, k: Math.min(W(), H()) / span };
+  clampView(); draw();
+}
+function systemsAt(sx, sy, radius) {
+  return shown.filter(s => matches(s)).map(s => { const [x, y] = toScreen(s.x, s.z); return [Math.hypot(x - sx, y - sy), s]; })
+              .filter(([d]) => d <= radius).sort((a, b) => a[0] - b[0]).map(([, s]) => s);
+}
+// pan with a drag, zoom with the wheel or a pinch; a tap that did not move chooses the nearest system
+const pointers = new Map();
+let drag = null, pinch = null;
+cv.addEventListener("pointerdown", e => {
+  cv.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  if (pointers.size === 1) drag = { x: e.offsetX, y: e.offsetY, cx: view.cx, cz: view.cz, moved: false };
+  if (pointers.size === 2) { const [a, b] = [...pointers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), k: view.k }; drag = null; }
+});
+cv.addEventListener("pointermove", e => {
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+  if (pinch && pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, [wx, wz] = toWorld(mx, my);
+    view.k = pinch.k * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d; clampView();
+    const [nx, nz] = toWorld(mx, my); view.cx += wx - nx; view.cz += wz - nz; clampView(); draw(); return;
+  }
+  if (drag) {
+    const dx = e.offsetX - drag.x, dy = e.offsetY - drag.y;
+    if (Math.hypot(dx, dy) > 4) { drag.moved = true; cv.classList.add("dragging"); }
+    if (drag.moved) { view.cx = drag.cx - dx / view.k; view.cz = drag.cz - dy / view.k; clampView(); draw(); }
+    return;
+  }
+  if (e.pointerType === "mouse") hover(e.offsetX, e.offsetY);
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (drag && !drag.moved && e.type === "pointerup") {
+    const hit = systemsAt(e.offsetX, e.offsetY, 16);
+    if (hit.length) choose(hit[0], { center: false });
+  }
+  if (pointers.size === 0) { drag = null; cv.classList.remove("dragging"); }
+}
+cv.addEventListener("pointerup", endPointer);
+cv.addEventListener("pointercancel", endPointer);
+cv.addEventListener("pointerleave", () => { $("tip").hidden = true; });
+cv.addEventListener("wheel", e => {
+  e.preventDefault();
+  const [wx, wz] = toWorld(e.offsetX, e.offsetY);
+  view.k *= Math.exp(-e.deltaY * 0.0015); clampView();
+  const [nx, nz] = toWorld(e.offsetX, e.offsetY); view.cx += wx - nx; view.cz += wz - nz; clampView(); draw();
+}, { passive: false });
+function zoomBy(f) { view.k *= f; clampView(); draw(); }
+$("zin").onclick = () => zoomBy(1.6);
+$("zout").onclick = () => zoomBy(1 / 1.6);
+$("fit").onclick = () => fitView(shown.filter(matches));
+function hover(x, y) {
+  const hit = systemsAt(x, y, 12), tip = $("tip");
+  if (!hit.length) { tip.hidden = true; return; }
+  const s = hit[0];
+  tip.textContent = titleOf(s) + (s.planets.length ? ` · ${s.planets.length} planets` : "") + (hit.length > 1 ? ` · +${hit.length - 1} nearby` : "");
+  tip.hidden = false;
+  tip.style.left = Math.min(x + 14, W() - tip.offsetWidth - 6) + "px";
+  tip.style.top = Math.max(6, y - 30) + "px";
+}
+// a real resize repaints in the SAME frame (observers run before the browser paints), so a wiped canvas never shows
+new ResizeObserver(() => { if (sizeCanvas()) { clampView(); paint(); } }).observe(cv);
+
+// ---- choosing a system, and its card -------------------------------------------------------------------------------
+function choose(s, opts = {}) {
+  if (s.g !== galaxy) setGalaxy(s.g, false);
+  selected = s;
+  const nums = s.planets.map(p => p.n);
+  planetNo = opts.planet && nums.includes(opts.planet) ? opts.planet : (nums[0] || 1);
+  if (opts.center) { view.cx = s.x; view.cz = s.z; view.k = Math.max(view.k, 0.45); clampView(); }
+  renderCard(); renderList(); draw();
+  history.replaceState(null, "", "#" + linkFor(s, planetNo));
+}
+const linkFor = (s, p) => `${s.g}/${galacticCoords(s)}/${p}`;
+function renderCard() {
+  const s = selected, card = $("card");
+  if (!s) {
+    card.innerHTML = `<p class="empty">Tap a system on the map, or pick one from the list, to see its planets and the portal glyphs that take you there.</p>`;
+    return;
+  }
+  const g = DATA.galaxies.find(x => x.g === s.g);
+  const facts = [["Star", s.star], ["Race", s.race], ["Economy", s.economy], ["Wealth", s.wealth], ["Conflict", s.conflict]]
+    .filter(([, v]) => v).map(([k, v]) => `<li><b>${k}</b> ${esc(v)}</li>`).join("");
+  const nearby = systemsAt(...toScreen(s.x, s.z), 3).filter(o => o !== s);
+  const planets = s.planets.length
+    ? s.planets.map(p => `<button type="button" class="planet" data-n="${p.n}" aria-pressed="${p.n === planetNo}">
+        <span class="num">${p.n}</span><span class="pname">${p.name ? esc(p.name) : "<i>unnamed</i>"}</span>
+        ${p.biome ? `<span class="biome" style="background:${BIOME_COL[p.biome] || "#999"}">${esc(p.biome)}</span>` : ""}</button>`).join("")
+    : `<p class="note">No planet details were recorded for this system - the glyphs below arrive at its first planet.</p>`;
+  const p = s.planets.find(x => x.n === planetNo), hex = portalHex(s, planetNo);
+  card.innerHTML = `
+    <h2>${esc(titleOf(s))}</h2>
+    <p class="where">${esc(g ? g.name : "Galaxy " + (s.g + 1))} · <span class="code">${galacticCoords(s)}</span>${s.visits ? ` · visited ${s.visits === 1 ? "once" : s.visits + " times"}` : ""}${s.station ? " · space station" : ""}</p>
+    ${facts ? `<ul class="facts">${facts}</ul>` : ""}
+    ${s.touching ? `<p class="note">Two planets in this system touch.</p>` : ""}
+    <h3>Planets</h3>
+    <div class="planets">${planets}</div>
+    <h3>Portal glyphs</h3>
+    <div class="portal">
+      <p class="for">to ${p && p.name ? esc(p.name) : "planet " + planetNo} in ${esc(g ? g.name : "this galaxy")} - dial these at any portal in that galaxy</p>
+      ${glyphStrip(hex)}
+      <div class="row"><span class="hex">${hex.slice(0, 4)} ${hex.slice(4, 8)} ${hex.slice(8)}</span>
+        <button type="button" class="small primary" id="copyHex">copy glyph code</button>
+        <button type="button" class="small" id="copyLink">share link</button></div>
+    </div>
+    ${s.found_by.length ? `<h3>Players who have been here</h3>
+      <p class="note">from the game's discovery records: the name each discovery was uploaded under, and their platform</p>
+      <ul class="people">${s.found_by.map(p => `<li><span class="pn">${esc(p.name)}</span>${p.on ? `<span class="plat plat-${p.on.toLowerCase()}">${esc(p.on)}</span>` : ""}${p.finds > 1 ? `<span class="finds">${p.finds} finds</span>` : ""}</li>`).join("")}</ul>` : ""}
+    ${nearby.length ? `<h3>Also at this spot</h3><div class="planets">${nearby.map((o, i) => `<button type="button" class="planet" data-other="${i}"><span class="pname">${esc(titleOf(o))}</span></button>`).join("")}</div>` : ""}`;
+  card.querySelectorAll(".planet[data-n]").forEach(b => b.onclick = () => { planetNo = +b.dataset.n; renderCard(); history.replaceState(null, "", "#" + linkFor(s, planetNo)); });
+  card.querySelectorAll(".planet[data-other]").forEach(b => b.onclick = () => choose(nearby[+b.dataset.other]));
+  $("copyHex").onclick = () => copy(hex, "Glyph code copied");
+  $("copyLink").onclick = () => copy(location.href.split("#")[0] + "#" + linkFor(s, planetNo), "Link copied");
+}
+async function copy(text, msg) {
+  try { await navigator.clipboard.writeText(text); toast(msg); }
+  catch (e) {                       // older browsers, or a page opened from a file
+    const t = document.createElement("textarea");
+    t.value = text; document.body.appendChild(t); t.select();
+    let ok = false;
+    try { ok = document.execCommand("copy"); } catch (e2) { ok = false; }
+    t.remove();
+    toast(ok ? msg : "Copy this: " + text);
+  }
+}
+let toastTimer = 0;
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.opacity = 1; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.style.opacity = 0; }, 2200); }
+
+// ---- the galaxy tabs and the list -------------------------------------------------------------------------------------
+function setGalaxy(g, fit = true) {
+  galaxy = g;
+  shown = DATA.systems.filter(s => s.g === g);
+  backdrop = makeBackdrop(g);
+  if (selected && selected.g !== g) selected = null;
+  renderTabs(); renderList();
+  if (fit) fitView(shown);
+  if (!selected) renderCard();
+}
+function renderTabs() {
+  $("tabs").innerHTML = DATA.galaxies.map(x => {
+    const n = query ? DATA.systems.filter(s => s.g === x.g && matches(s)).length : x.systems;
+    return `<button type="button" class="tab" role="tab" data-g="${x.g}" aria-selected="${x.g === galaxy}">${esc(x.name)}<span class="n">${n}</span></button>`;
+  }).join("");
+  $("tabs").querySelectorAll(".tab").forEach(b => b.onclick = () => setGalaxy(+b.dataset.g));
+}
+function summary(s) {
+  const bits = [];
+  if (s.star) bits.push(s.star + " star");
+  if (s.race) bits.push(s.race);
+  if (s.planets.length) bits.push(s.planets.map(p => p.biome).filter(Boolean).join(", "));
+  else bits.push(galacticCoords(s));
+  return bits.join(" · ");
+}
+function renderList() {
+  const list = shown.filter(matches).sort((a, b) => (b.planets.length > 0) - (a.planets.length > 0) || titleOf(a).localeCompare(titleOf(b)));
+  const g = DATA.galaxies.find(x => x.g === galaxy);
+  $("listTitle").textContent = `${list.length} ${list.length === 1 ? "system" : "systems"} in ${g ? g.name : "this galaxy"}${query ? ` matching "${query}"` : ""}`;
+  $("items").innerHTML = list.map((s, i) => `<button type="button" class="item" data-i="${i}" aria-current="${s === selected}">
+      <span class="t"><span class="dot" style="${STAR_COL[s.star] ? `background:${STAR_COL[s.star]}` : `background:transparent;outline:1px solid ${UNKNOWN_COL};outline-offset:-1px`}"></span>${esc(titleOf(s))}</span>
+      <span class="m">${esc(summary(s))}</span></button>`).join("");
+  $("items").querySelectorAll(".item").forEach(b => b.onclick = () => { choose(list[+b.dataset.i], { center: true }); $("map").scrollIntoView({ behavior: "smooth", block: "nearest" }); });
+}
+$("q").addEventListener("input", () => {
+  query = $("q").value.trim().toLowerCase();
+  renderTabs(); renderList(); draw();
+});
+function legend() {
+  $("legend").innerHTML = Object.entries(STAR_COL).map(([k, c]) => `<span><span class="dot" style="background:${c}"></span>${k} star</span>`).join("") +
+    `<span><span class="dot" style="background:transparent;outline:1px solid ${UNKNOWN_COL};outline-offset:-1px"></span>star not recorded</span>` +
+    `<span><span class="dot ring" style="background:transparent"></span>space station</span>`;
+}
+
+// ---- start: read the data, then honour a shared link -------------------------------------------------------------------
+function fromHash() {
+  const parts = decodeURIComponent(location.hash.slice(1)).split("/");
+  if (parts.length < 2) return false;
+  const g = +parts[0], c = parseCoords(parts[1]), p = +parts[2] || 0;
+  if (!c || !Number.isInteger(g)) return false;
+  const s = DATA.systems.find(o => o.g === g && o.x === c.x && o.y === c.y && o.z === c.z && o.s === c.s);
+  if (!s) return false;
+  setGalaxy(s.g, false);
+  choose(s, { center: true, planet: p });
+  return true;
+}
+fetch("data.json").then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(d => {
+  DATA = d;
+  for (const s of DATA.systems) s._hay = haystack(s);
+  legend();
+  sizeCanvas();
+  const first = DATA.galaxies.slice().sort((a, b) => b.systems - a.systems)[0];
+  if (!fromHash()) setGalaxy(first ? first.g : 0);
+  $("foot").innerHTML = `${DATA.systems.length} systems in ${DATA.galaxies.length} galaxies, exported ${esc(DATA.generated)}. ` +
+    `The names of the people who made this map are left out on purpose; the other players listed are the public discovery credits the game itself shows, with their platform. ` +
+    `Portal glyph images and game names © Hello Games, from No Man's Sky; this is a fan page.`;
+}).catch(err => {
+  $("card").innerHTML = `<p class="empty">The map's data did not load (${esc(err.message || err)}). If you opened this file directly, open it from the website instead: browsers do not let a page read files beside it.</p>`;
+});
+window.addEventListener("hashchange", () => { if (DATA) fromHash(); });
+</script>
+</body>
+</html>
