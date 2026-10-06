@@ -11,6 +11,7 @@ import random
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.dont_write_bytecode = True                # importing pixelkit must not leave a __pycache__ in the postcards' folder
 sys.path.insert(0, os.path.join(HERE, "..", "2026-10-06 Postcards"))
 from pixelkit import Canvas, Noise, gradient, mix, add, scale  # noqa: E402
 
