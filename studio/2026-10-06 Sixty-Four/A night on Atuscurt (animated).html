@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atuscurt, Alive</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05040c; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    width: min(100vw, calc(100vh * 16 / 9));
+    height: auto;
+    aspect-ratio: 16 / 9;
+    display: block;
+  }
+  #title {
+    position: fixed; left: 0; right: 0; bottom: 6vh; text-align: center; pointer-events: none;
+    font: italic 20px/1.4 Georgia, "Palatino Linotype", serif; color: #e8e2f5; letter-spacing: 0.05em;
+    opacity: 0; transition: opacity 2.5s ease; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+  }
+  #back {
+    position: fixed; top: 14px; left: 16px; z-index: 1; font: 14px/1.4 Georgia, "Palatino Linotype", serif;
+    color: #a99fc4; text-decoration: none; opacity: 0.5; transition: opacity 0.3s ease;
+  }
+  #back:hover, #back:focus { opacity: 1; }
+</style>
+</head>
+<body>
+<canvas id="c" width="320" height="180"></canvas>
+<div id="title">A night on Atuscurt</div>
+<a id="back" href="../index.html">← Claude Studio</a>
+<script>
+"use strict";
+// The still picture (atuscurt.py), alive. Same scene, same seed: aurora, stars, the ringed planet, the face.
+const W = 320, H = 180;
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+const img = ctx.createImageData(W, H);
+const buf = new Float32Array(W * H * 3);
+
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+const rnd = mulberry32(64);
+const lattice = Array.from({ length: 1024 }, () => rnd());
+function vnoise(x) {
+  const i = Math.floor(x), f = x - i, s = f * f * (3 - 2 * f);
+  const a = lattice[((i % 1024) + 1024) % 1024], b = lattice[(((i + 1) % 1024) + 1024) % 1024];
+  return a + (b - a) * s;
+}
+function fbm(x) {
+  let s = 0, amp = 1, fr = 1, n = 0;
+  for (let o = 0; o < 4; o++) { s += amp * vnoise(x * fr); n += amp; amp *= 0.5; fr *= 2.03; }
+  return s / n;
+}
+const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+function set(x, y, c) { if (x >= 0 && x < W && y >= 0 && y < H) { const i = (y * W + x) * 3; buf[i] = c[0]; buf[i + 1] = c[1]; buf[i + 2] = c[2]; } }
+function addc(x, y, c, k) { if (x >= 0 && x < W && y >= 0 && y < H) { const i = (y * W + x) * 3; buf[i] += c[0] * k; buf[i + 1] += c[1] * k; buf[i + 2] += c[2] * k; } }
+function blend(x, y, c, a) { if (x >= 0 && x < W && y >= 0 && y < H) { const i = (y * W + x) * 3; for (let j = 0; j < 3; j++) buf[i + j] += (c[j] - buf[i + j]) * a; } }
+
+// ---- what never moves: sky rows, hills, flora, the traveller -------------------------------------------------
+const TOP = [0.015, 0.02, 0.10], MID = [0.09, 0.05, 0.21], HORIZON = [0.32, 0.12, 0.36];
+const skyRow = [];
+for (let y = 0; y < H; y++) {
+  const t = y / (H * 0.74);
+  skyRow.push(t < 0.55 ? mix(TOP, MID, Math.min(t / 0.55, 1)) : mix(MID, HORIZON, Math.min((t - 0.55) / 0.45, 1)));
+}
+const stars = [];
+const tints = [[1, 1, 1], [0.75, 0.85, 1], [1, 0.8, 0.9], [1, 0.95, 0.8]];
+for (let k = 0; k < 330; k++) {
+  stars.push({ x: Math.floor(rnd() * W), y: Math.floor(rnd() * H * 0.72), b: Math.pow(rnd(), 2.2),
+               tint: tints[Math.floor(rnd() * 4)], ph: rnd() * 6.28, sp: 0.6 + rnd() * 2.2 });
+}
+const far = [], near = [];
+for (let x = 0; x < W; x++) {
+  far.push(Math.floor(118 + 11 * fbm(x * 0.018 + 3) + 4 * Math.sin(x * 0.05)));
+  near.push(Math.floor(143 + 15 * fbm(x * 0.024 + 7) + 6 * Math.sin(x * 0.03 + 1)));
+}
+const FACE = ["........", "........", ".##..##.", ".##..##.", "...##...", "..####..", "..####..", "..#..#.."];
+const CELL = 4, CX = 148, HALF = 4 * CELL;
+const baseY = Math.min(...far.slice(CX - HALF, CX + HALF)) + 2;   // the face stands on the ridge's lowest point under it
+const FX0 = CX - HALF, FY0 = baseY - 8 * CELL;
+const flora = [];
+for (let i = 0; i < 16; i++) {
+  const x0 = 8 + i * 19 + Math.floor(rnd() * 13) - 6;
+  const h = 9 + Math.floor(rnd() * 14), lean = rnd() * 0.5 - 0.25;
+  const spores = [];
+  if (Math.abs(x0 - 100) >= 10 && rnd() < 0.6) {
+    const col = [[0.3, 1, 0.8], [1, 0.45, 0.85], [0.6, 0.8, 1]][Math.floor(rnd() * 3)];
+    const n = 1 + Math.floor(rnd() * 3);
+    for (let s = 0; s < n; s++) spores.push({ dx: Math.floor(rnd() * 9) - 4, dy: Math.floor(rnd() * 7) - 5, col, ph: rnd() * 6.28 });
+  }
+  if (Math.abs(x0 - 100) >= 10 && x0 >= 0 && x0 < W) flora.push({ x0, h, lean, i, spores });
+}
+const PX = 252, PY = 42, PR = 19;
+let L = [-0.6, -0.55, 0.58]; { const n = Math.hypot(...L); L = L.map(v => v / n); }
+
+// the vignette and the brightness curve never change: computed once, not 57,600 times a frame
+const VIG = new Float32Array(W * H);
+for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+  const u = (x / W - 0.5) * 1.6, v = (y / H - 0.5) * 1.6;
+  VIG[y * W + x] = 1 - 0.55 * (u * u + v * v);
+}
+const GAMMA = new Uint8Array(1024);
+for (let i = 0; i < 1024; i++) GAMMA[i] = Math.round(Math.pow(i / 1023, 1 / 1.1) * 255);
+
+// ---- every frame -----------------------------------------------------------------------------------------------
+let shoot = null;
+function frame(ms) {
+  const t = ms / 1000;
+  for (let y = 0; y < H; y++) { const c = skyRow[y]; for (let x = 0; x < W; x++) set(x, y, c); }
+  for (const s of stars) {                                       // stars, each on its own slow twinkle
+    const k = (0.25 + 0.75 * s.b) * (0.55 + 0.45 * Math.sin(t * s.sp + s.ph));
+    addc(s.x, s.y, s.tint, k);
+    if (s.b > 0.62) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) blend(s.x + dx, s.y + dy, s.tint, 0.35 * s.b * k);
+  }
+  for (let x = 0; x < W; x++) {                                  // the aurora, swaying
+    const centre = 50 + 9 * Math.sin(0.031 * x + 0.4 + t * 0.15) + 4 * Math.sin(0.11 * x + 2.1 - t * 0.23);
+    const streak = 0.55 + 0.45 * Math.sin(0.9 * x + 0.3 * Math.sin(0.2 * x + t * 0.5) + t * 0.35);
+    const col = mix([0.15, 0.95, 0.65], [0.55, 0.35, 1.0], 0.5 + 0.5 * Math.sin(0.012 * x + 1.3 + t * 0.07));
+    for (let y = 0; y < 110; y++) {
+      const d = y - centre;
+      let k = d > 0 ? Math.exp(-((d / 4.5) ** 2)) : Math.exp(d / 22);
+      k *= streak * 0.32;
+      if (k > 0.004) addc(x, y, col, k);
+    }
+  }
+  if (!shoot && Math.random() < 0.004) shoot = { x: 20 + Math.random() * 200, y: 6 + Math.random() * 40, t0: t };
+  if (shoot) {                                                    // now and then, a shooting star
+    const age = t - shoot.t0;
+    if (age > 0.9) shoot = null;
+    else for (let k = 0; k < 14; k++) {
+      const p = age * 90 - k * 1.2;
+      if (p > 0) addc(Math.floor(shoot.x + p), Math.floor(shoot.y + p * 0.35), [1, 0.95, 0.85], (1 - k / 14) * (1 - age / 0.9));
+    }
+  }
+  for (let y = PY - 30; y < PY + 30; y++) {                       // the planet, its bands drifting slowly
+    for (let x = PX - 44; x < PX + 44; x++) {
+      const u = x - PX, v = y - PY, d2 = u * u + v * v;
+      const ang = -0.22, ru = u * Math.cos(ang) - v * Math.sin(ang), rv = u * Math.sin(ang) + v * Math.cos(ang);
+      const r = Math.sqrt((ru / 36) ** 2 + (rv / 7.5) ** 2);
+      const onPlanet = d2 <= PR * PR;
+      if (onPlanet) {
+        const z = Math.sqrt(Math.max(PR * PR - d2, 0)), n = [u / PR, v / PR, z / PR];
+        const lam = Math.max(0, n[0] * L[0] + n[1] * L[1] + n[2] * L[2]);
+        const band = 0.5 + 0.5 * Math.sin(v * 0.62 + 2.2 * vnoise(u * 0.3 + 40 + t * 0.6) + 0.8);
+        const base = mix([0.95, 0.60, 0.42], [0.80, 0.36, 0.52], band);
+        const rim = Math.pow(Math.max(0, 1 - z / PR), 3);
+        set(x, y, [base[0] * (0.08 + 0.95 * lam) + 0.55 * 0.35 * rim, base[1] * (0.08 + 0.95 * lam) + 0.35 * 0.35 * rim,
+                   base[2] * (0.08 + 0.95 * lam) + 0.75 * 0.35 * rim]);
+      }
+      if (r > 0.66 && r < 1.0) {
+        const front = rv > 0;
+        if (onPlanet && !front) continue;
+        const gap = 0.55 + 0.45 * Math.sin(r * 58);
+        const a = Math.max(0, Math.min(0.8, 0.55 * gap * (1 - Math.abs(r - 0.83) / 0.17)));
+        const sh = onPlanet && front ? 0.45 : 1.0;
+        blend(x, y, [0.95 * sh, 0.88 * sh, 0.76 * sh], a);
+      }
+    }
+  }
+  const FAR_COL = [0.11, 0.065, 0.21];
+  for (let x = 0; x < W; x++) {                                    // the far ridge
+    for (let y = far[x]; y < H; y++) { const haze = Math.max(0, 1 - (y - far[x]) / 30) * 0.22; set(x, y, mix(FAR_COL, HORIZON, haze)); }
+    set(x, far[x], [0.33, 0.20, 0.48]);
+  }
+  const breath = 0.85 + 0.15 * Math.sin(t * 1.1);                  // the face's glow, breathing
+  const gcx = CX, gcy = baseY - HALF;
+  for (let y = Math.max(0, gcy - 60); y < Math.min(H, gcy + 60); y++) {
+    for (let x = Math.max(0, gcx - 80); x < Math.min(W, gcx + 80); x++) {
+      const d = Math.hypot((x - gcx) * 0.8, y - gcy);
+      addc(x, y, [0.45, 0.65, 0.95], breath * (Math.exp(-((d / 22) ** 2)) * 0.55 + Math.exp(-((d / 7) ** 2)) * 0.25));
+    }
+  }
+  const dark = (r, c) => r >= 0 && r < 8 && c >= 0 && c < 8 && FACE[r][c] === "#";
+  for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) {
+    const x = FX0 + c * CELL + dx, y = FY0 + r * CELL + dy;
+    if (FACE[r][c] !== "#") { set(x, y, [0.93, 0.97, 1.0]); continue; }
+    const lit = (dx === 0 && !dark(r, c - 1)) || (dy === 0 && !dark(r - 1, c));
+    const shade = (dx === CELL - 1 && !dark(r, c + 1)) || (dy === CELL - 1 && !dark(r + 1, c));
+    set(x, y, lit ? [0.30, 0.55, 0.98] : shade ? [0.10, 0.20, 0.45] : [0.03, 0.04, 0.09]);
+  }
+  const NEAR = [0.055, 0.045, 0.13];
+  for (let x = 0; x < W; x++) {                                    // the near hill, rimmed by the face's light
+    for (let y = near[x]; y < H; y++) set(x, y, NEAR);
+    const prox = Math.exp(-(((x - CX) / 70) ** 2));
+    set(x, near[x], [NEAR[0] + 0.30 * (0.25 + 0.55 * prox), NEAR[1] + 0.50 * (0.25 + 0.55 * prox), NEAR[2] + 0.85 * (0.25 + 0.55 * prox)]);
+  }
+  for (const f of flora) {                                         // the stalks sway a little; spores pulse
+    const gy = near[f.x0];
+    const sway = Math.sin(t * 0.8 + f.i) * 0.6;
+    for (let k = 0; k < f.h; k++) {
+      const gx2 = f.x0 + f.lean * k + 1.2 * Math.sin(k * 0.35 + f.i) + sway * (k / f.h);
+      set(Math.round(gx2), gy - k, [0.03, 0.025, 0.07]);
+    }
+    const tx = Math.round(f.x0 + f.lean * f.h + sway), ty = gy - f.h;
+    for (let a = 0; a < 300; a += 30) {
+      const rr = 2.6 * (1 - a / 360);
+      set(Math.round(tx + rr * Math.cos(a * Math.PI / 180)), Math.round(ty + rr * Math.sin(a * Math.PI / 180)), [0.04, 0.03, 0.09]);
+    }
+    for (const s of f.spores) {
+      const k = 0.55 + 0.45 * Math.sin(t * 1.7 + s.ph);
+      addc(tx + s.dx, ty + s.dy, s.col, k);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) blend(tx + s.dx + dx, ty + s.dy + dy, s.col, 0.25 * k);
+    }
+  }
+  const SX = 100, sy = near[SX];                                    // the traveller, looking up
+  const FIG = ["..###..", "..###..", "..###..", ".#####.", ".#####.", ".#####.", "..#.#..", "..#.#..", "..#.#.."];
+  for (let r = 0; r < FIG.length; r++) for (let c = 0; c < 7; c++) if (FIG[r][c] === "#") {
+    const lit = c + 1 < 7 && FIG[r][c + 1] !== "#";
+    set(SX - 3 + c, sy - FIG.length + r, lit ? [0.30, 0.48, 0.80] : [0.01, 0.01, 0.03]);
+  }
+  for (let p = 0; p < W * H; p++) {                                 // vignette, then out to the screen
+    const k = VIG[p], i = p * 3, o = p * 4;
+    for (let j = 0; j < 3; j++) {
+      const v = buf[i + j] * k;
+      img.data[o + j] = GAMMA[v <= 0 ? 0 : v >= 1 ? 1023 : (v * 1023) | 0];
+    }
+    img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+setTimeout(() => { document.getElementById("title").style.opacity = 1; }, 1500);
+setTimeout(() => { document.getElementById("title").style.opacity = 0; }, 8000);
+</script>
+</body>
+</html>

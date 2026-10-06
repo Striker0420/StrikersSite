@@ -1,0 +1,83 @@
+/* Additions for the Claude Studio sections - loaded after main.css, so the template's own files stay untouched. */
+
+/* The template frames spotlight pictures as circles (made for square photos); pixel art wants a wide frame.
+   Side by side, the text keeps whatever the picture leaves - but a flex item never shrinks below its widest
+   unbreakable line, and two no-wrap buttons in a row are wider than what a fixed 34em picture left, so the text
+   spilled ~120px out of the page's column (to the LEFT, the odd spotlight being row-reverse). So the picture is the
+   one that gives way. 28em is what the buttons leave at every desktop size (measured in Firefox, 1281-2560px: the
+   first section's picture settled at 28.3em each time), so both pictures share it and match; the shrink stays as
+   the safety net for a fallback font that sets the buttons wider. */
+.wrapper.spotlight .image.wide {
+	border-radius: 6px;
+	flex: 0 1 28em;
+	min-width: 0;
+	box-shadow: 0 1em 2.5em rgba(0, 0, 0, 0.35);
+}
+
+.wrapper.spotlight.stacked .content {
+	flex: 1 1 0;
+}
+
+	.wrapper.spotlight .image.wide img {
+		border-radius: 6px;
+		display: block;
+		image-rendering: pixelated;
+	}
+
+.pixel {
+	image-rendering: pixelated;
+}
+
+.wrapper.spotlight .content audio {
+	width: 100%;
+	margin: 0 0 1.5em 0;
+}
+
+.wrapper.spotlight .content blockquote {
+	font-style: italic;
+	margin-bottom: 1.5em;
+}
+
+.features article .verse {
+	font-style: italic;
+	opacity: 0.85;
+}
+
+/* The template fills a primary button with #4c5c96 - exactly the first spotlight's own background - and gives it no
+   border, so inside a spotlight it vanishes and reads as plain text. A white fill keeps it the obvious first choice. */
+.wrapper.spotlight .button.primary {
+	background-color: #ffffff;
+	box-shadow: none;
+	color: #3f4e85 !important;
+}
+
+	.wrapper.spotlight .button.primary:hover {
+		background-color: rgba(255, 255, 255, 0.88);
+	}
+
+	.wrapper.spotlight .button.primary:active {
+		background-color: rgba(255, 255, 255, 0.75);
+	}
+
+/* Raleway's default figures are old-style, which made "Striker0420" on the GitHub button read as "Strikero42o". */
+.button, h1, h2, h3, h4, h5, h6 {
+	font-variant-numeric: lining-nums;
+}
+
+/* Below desktop width the template keeps spotlights side by side (down to 480px), which suits small round photos;
+   a wide picture beside text gets cramped, so these sections stack: the picture on top, full width. Stacked, the
+   template's mirrored right-aligned text (every odd spotlight) only makes paragraphs harder to read, so it goes left. */
+@media screen and (max-width: 1280px) {
+	.wrapper.spotlight.stacked .inner,
+	.wrapper.spotlight.stacked:nth-child(2n - 1) .inner {
+		display: block;
+		text-align: left;
+	}
+
+	.wrapper.spotlight.stacked .image.wide,
+	.wrapper.spotlight.stacked:nth-child(2n - 1) .image.wide {
+		width: 100%;
+		margin: 0 0 2em 0 !important;
+		max-width: none;
+	}
+}
